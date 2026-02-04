@@ -1,4 +1,4 @@
-name: Build Unsigned IPA
+name: Build Usable Unsigned IPA
 
 on:
   push:
@@ -14,33 +14,27 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Xcode
-        # This is the "smart" way. 'latest-stable' avoids path errors.
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: 'latest-stable'
 
-      - name: Auto-Detect and Build
+      - name: Auto-Detect Project and Scheme
+        id: detect
         run: |
-          # 1. Find the project file automatically
           PROJECT_PATH=$(find . -name "*.xcodeproj" -print -quit)
-          
-          if [ -z "$PROJECT_PATH" ]; then
-            echo "ERROR: No .xcodeproj found!"
-            exit 1
-          fi
+          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | awk '/Schemes:/{flag=1;next}/^$/{flag=0}flag' | sed 's/^[[:space:]]*//' | head -n 1)
+          echo "project_path=$PROJECT_PATH" >> $GITHUB_OUTPUT
+          echo "scheme_name=$SCHEME_NAME" >> $GITHUB_OUTPUT
 
-          # 2. Get the first available Scheme
-          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | awk '/Schemes:/{flag=1;next}/^$/{flag=0}flag' | xargs | awk '{print $1}')
-          
-          echo "Building: $PROJECT_PATH with Scheme: $SCHEME_NAME"
-
-          # 3. Execute the build (Unsigned)
-          xcodebuild clean build \
-            -project "$PROJECT_PATH" \
-            -scheme "$SCHEME_NAME" \
+      - name: Archive App (Unsigned)
+        run: |
+          # Archiving creates the 'distribution' version of the app
+          xcodebuild clean archive \
+            -project "${{ steps.detect.outputs.project_path }}" \
+            -scheme "${{ steps.detect.outputs.scheme_name }}" \
+            -archivePath build_output/App.xcarchive \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath build_output \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -49,13 +43,14 @@ jobs:
       - name: Package into IPA
         run: |
           mkdir -p Payload
-          # Finds any .app folder created and moves it to the Payload
-          find build_output/Build/Products/Release-iphoneos -name "*.app" -exec cp -r {} Payload/ \;
-          zip -r App-Unsigned.ipa Payload
+          # Extract the actual .app from the xcarchive structure
+          cp -r build_output/App.xcarchive/Products/Applications/*.app Payload/
+          # Create the zip with the correct structure
+          zip -v -r ChatGPT-Unsigned.ipa Payload
           rm -rf Payload
 
-      - name: Upload IPA
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Unsigned-IPA-Package
-          path: App-Unsigned.ipa
+          name: Usable-IPA
+          path: ChatGPT-Unsigned.ipa
