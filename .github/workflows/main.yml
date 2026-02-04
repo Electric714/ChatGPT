@@ -21,14 +21,25 @@ jobs:
       - name: Auto-Detect Project and Scheme
         id: detect
         run: |
-          PROJECT_PATH=$(find . -name "*.xcodeproj" -print -quit)
-          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | awk '/Schemes:/{flag=1;next}/^$/{flag=0}flag' | sed 's/^[[:space:]]*//' | head -n 1)
+          # 1. Find the main project file
+          PROJECT_PATH=$(find . -name "*.xcodeproj" -not -path "*/Pods/*" -print -quit)
+          
+          # 2. Find the correct App Scheme (ignores library schemes like Alamofire)
+          # We look for a scheme that matches the project name or contains 'ChatGPT'
+          PROJECT_NAME=$(basename "$PROJECT_PATH" .xcodeproj)
+          SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | awk '/Schemes:/{flag=1;next}/^$/{flag=0}flag' | sed 's/^[[:space:]]*//' | grep -iE "ChatGPT|$PROJECT_NAME" | head -n 1)
+          
+          # Fallback: If the above search fails, just take the first scheme available
+          if [ -z "$SCHEME_NAME" ]; then
+            SCHEME_NAME=$(xcodebuild -list -project "$PROJECT_PATH" | awk '/Schemes:/{flag=1;next}/^$/{flag=0}flag' | sed 's/^[[:space:]]*//' | head -n 1)
+          fi
+
           echo "project_path=$PROJECT_PATH" >> $GITHUB_OUTPUT
           echo "scheme_name=$SCHEME_NAME" >> $GITHUB_OUTPUT
+          echo "DEBUG: Building Project: $PROJECT_PATH with Scheme: $SCHEME_NAME"
 
       - name: Archive App (Unsigned)
         run: |
-          # Archiving creates the 'distribution' version of the app
           xcodebuild clean archive \
             -project "${{ steps.detect.outputs.project_path }}" \
             -scheme "${{ steps.detect.outputs.scheme_name }}" \
@@ -43,9 +54,8 @@ jobs:
       - name: Package into IPA
         run: |
           mkdir -p Payload
-          # Extract the actual .app from the xcarchive structure
+          # This copy command is now more robust to find the .app regardless of name
           cp -r build_output/App.xcarchive/Products/Applications/*.app Payload/
-          # Create the zip with the correct structure
           zip -v -r ChatGPT-Unsigned.ipa Payload
           rm -rf Payload
 
